@@ -3,3 +3,4 @@
 /.mypy_cache/
 /venv/
 /pickles/
+.DS_Store
