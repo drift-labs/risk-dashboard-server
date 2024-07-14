@@ -1,10 +1,13 @@
 import os
 import logging
 import msgpack  # type: ignore
+import io
+import zipfile
+import pickle
 
 from dotenv import load_dotenv
 
-from quart import Quart, Response
+from quart import Quart, Response, send_file
 
 from driftpy.drift_client import DriftClient
 from driftpy.pickle.vat import Vat
@@ -45,7 +48,7 @@ user, stats, spot, perp = get_maps(dc)
 vat = Vat(dc, user, stats, spot, perp)
 
 latest_prod_context = {
-    "vat": None,
+    "filenames": None,
     "levs_none": None,
     "levs_init": None,
     "levs_maint": None,
@@ -56,7 +59,7 @@ latest_prod_context = {
 
 
 latest_dev_context = {
-    "vat": None,
+    "filenames": None,
     "levs_none": None,
     "levs_init": None,
     "levs_maint": None,
@@ -74,7 +77,7 @@ async def load_latest_contexts():
     vat_start = time.time()
     try:
         await vat.pickle()
-    except Exception as e:
+    except:
         await vat.pickle()
     logger.info(f"loaded vat in {time.time() - vat_start} seconds")
     sort_start = time.time()
@@ -107,7 +110,7 @@ async def load_prod_context():
 
     res, df = get_matrix(levs_none, levs_init, levs_maint, user_keys)
 
-    latest_prod_context["vat"] = vat
+    latest_prod_context["filenames"] = newest_snapshot
     latest_prod_context["levs_none"] = levs_none
     latest_prod_context["levs_init"] = levs_init
     latest_prod_context["levs_maint"] = levs_maint
@@ -135,7 +138,7 @@ async def load_dev_context():
 
     res, df = get_matrix(levs_none, levs_init, levs_maint, user_keys)
 
-    latest_dev_context["vat"] = vat
+    latest_dev_context["filenames"] = newest_snapshot
     latest_dev_context["levs_none"] = levs_none
     latest_dev_context["levs_init"] = levs_init
     latest_dev_context["levs_maint"] = levs_maint
@@ -198,6 +201,37 @@ async def get_dev_context():
     response = Response(msgpack.packb(data), mimetype="application/msgpack")
 
     return response
+
+
+@app.route("/pickles")
+async def get_pickles():
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for _, filename in latest_prod_context["filenames"].items():
+            try:
+                with open(filename, "rb") as file:
+                    data = pickle.load(file)
+
+                pkl_bytes = io.BytesIO()
+                pickle.dump(data, pkl_bytes)
+                pkl_bytes.seek(0)
+                short_filename = os.path.basename(filename)
+
+                zip_file.writestr(short_filename, pkl_bytes.getvalue())
+            except FileNotFoundError:
+                print(f"File not found: {filename}")
+            except Exception as e:
+                print(f"Error loading file: {filename}: {str(e)}")
+
+    zip_buffer.seek(0)
+
+    return await send_file(
+        zip_buffer,
+        as_attachment=True,
+        attachment_filename="pickles.zip",
+        mimetype="application/zip",
+    )
 
 
 if __name__ == "__main__":
