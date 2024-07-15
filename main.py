@@ -239,5 +239,6 @@ if __name__ == "__main__":
 
     logger.info("starting server")
     config = Config()
+    config.bind = ["0.0.0.0:8080"]
     config.startup_timeout = 600
     asyncio.run(serve(app, config))
